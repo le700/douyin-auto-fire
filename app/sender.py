@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import random
 import secrets
+import tempfile
+from pathlib import Path
 from urllib.parse import urlsplit
 
+from PIL import Image
 from playwright.async_api import Page
 
 from app.douyin import DouyinChat, PageOperationError, first_visible
@@ -115,11 +118,12 @@ async def send_image(page: Page, image_path: str) -> None:
             break
     if file_input is None:
         raise PageOperationError("找不到图片上传控件")
-    await file_input.set_input_files(image_path)
-    await page.wait_for_timeout(1_500)
-
-    await _trigger_send(page)
+    upload_path, temporary_path = _prepare_image_upload(image_path)
     try:
+        await file_input.set_input_files(upload_path)
+        await page.wait_for_timeout(1_500)
+
+        await _trigger_send(page)
         await page.wait_for_function(
             """([selector, count]) => document.querySelectorAll(selector).length > count""",
             arg=['[data-e2e="msg-item-content"]', before],
@@ -127,6 +131,27 @@ async def send_image(page: Page, image_path: str) -> None:
         )
     except Exception as exc:
         raise PageOperationError("图片消息已触发发送，但无法确认是否发送成功；为避免重复不会自动重试") from exc
+    finally:
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)
+
+
+def _prepare_image_upload(image_path: str) -> tuple[str, Path | None]:
+    source = Path(image_path)
+    if source.suffix.lower() != ".webp":
+        return image_path, None
+
+    temporary_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as temporary_file:
+            temporary_path = Path(temporary_file.name)
+        with Image.open(source) as image:
+            image.convert("RGBA").save(temporary_path, "PNG")
+    except Exception as exc:
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)
+        raise PageOperationError("无法将 WebP 图片转换为抖音可上传的 PNG") from exc
+    return temporary_path.as_posix(), temporary_path
 
 
 async def _restore_composer(page: Page, timeout_ms: int = 10_000) -> None:

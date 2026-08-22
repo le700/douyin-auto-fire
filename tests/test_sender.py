@@ -1,3 +1,4 @@
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -14,9 +15,43 @@ from app.sender import (
     _restore_composer,
     _sticker_resource_key,
     _trigger_send,
+    send_image,
     send_message,
     send_text,
 )
+
+
+@pytest.mark.asyncio
+async def test_send_image_converts_webp_to_png_before_upload(monkeypatch) -> None:
+    source_image = Path(__file__).parents[1] / "assets" / "goodnight-dog.webp"
+    assert source_image.is_file()
+
+    page = MagicMock()
+    message_items = MagicMock()
+    message_items.count = AsyncMock(return_value=0)
+    file_input = MagicMock()
+    file_input.count = AsyncMock(return_value=1)
+    uploaded_paths: list[Path] = []
+
+    async def record_upload(uploaded_path: str) -> None:
+        candidate = Path(uploaded_path)
+        assert candidate.is_file()
+        assert candidate.read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
+        uploaded_paths.append(candidate)
+
+    file_input.set_input_files = AsyncMock(side_effect=record_upload)
+    input_group = MagicMock()
+    input_group.first = file_input
+    page.locator.side_effect = lambda selector: (
+        message_items if selector == '[data-e2e="msg-item-content"]' else input_group
+    )
+    page.wait_for_timeout = AsyncMock()
+    page.wait_for_function = AsyncMock()
+    monkeypatch.setattr("app.sender._trigger_send", AsyncMock())
+
+    await send_image(page, source_image.as_posix())
+
+    assert uploaded_paths[0].suffix == ".png"
 
 
 @pytest.mark.asyncio
