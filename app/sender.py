@@ -108,8 +108,6 @@ async def send_text(chat: DouyinChat, content: str) -> None:
 
 
 async def send_image(page: Page, image_path: str) -> None:
-    message_items = page.locator('[data-e2e="msg-item-content"]')
-    before = await message_items.count()
     file_input = None
     for selector in IMAGE_INPUTS:
         candidate = page.locator(selector).first
@@ -119,17 +117,16 @@ async def send_image(page: Page, image_path: str) -> None:
     if file_input is None:
         raise PageOperationError("找不到图片上传控件")
     upload_path, temporary_path = _prepare_image_upload(image_path)
+    before = await _mark_latest_outgoing_message(page)
     try:
         await file_input.set_input_files(upload_path)
         await page.wait_for_timeout(1_500)
 
         if not await _confirm_image_send_dialog(page):
             await _trigger_send(page)
-        await page.wait_for_function(
-            """([selector, count]) => document.querySelectorAll(selector).length > count""",
-            arg=['[data-e2e="msg-item-content"]', before],
-            timeout=15_000,
-        )
+        await _confirm_outgoing_message(page, before, label="图片")
+    except PageOperationError:
+        raise
     except Exception as exc:
         raise PageOperationError("图片消息已触发发送，但无法确认是否发送成功；为避免重复不会自动重试") from exc
     finally:
