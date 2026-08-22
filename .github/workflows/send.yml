@@ -1,3 +1,4 @@
+# Register this workflow for the forked repository.
 name: Send Douyin Messages
 
 on:
