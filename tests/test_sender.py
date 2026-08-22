@@ -42,9 +42,17 @@ async def test_send_image_converts_webp_to_png_before_upload(monkeypatch) -> Non
     file_input.set_input_files = AsyncMock(side_effect=record_upload)
     input_group = MagicMock()
     input_group.first = file_input
-    page.locator.side_effect = lambda selector: (
-        message_items if selector == '[data-e2e="msg-item-content"]' else input_group
-    )
+    no_dialogs = MagicMock()
+    no_dialogs.count = AsyncMock(return_value=0)
+
+    def locator_for(selector):
+        if selector == '[data-e2e="msg-item-content"]':
+            return message_items
+        if selector == ".semi-modal-wrap":
+            return no_dialogs
+        return input_group
+
+    page.locator.side_effect = locator_for
     page.wait_for_timeout = AsyncMock()
     page.wait_for_function = AsyncMock()
     monkeypatch.setattr("app.sender._trigger_send", AsyncMock())
@@ -52,6 +60,51 @@ async def test_send_image_converts_webp_to_png_before_upload(monkeypatch) -> Non
     await send_image(page, source_image.as_posix())
 
     assert uploaded_paths[0].suffix == ".png"
+
+
+@pytest.mark.asyncio
+async def test_send_image_confirms_the_image_send_dialog(monkeypatch) -> None:
+    source_image = Path(__file__).parents[1] / "assets" / "goodnight-dog.webp"
+    page = MagicMock()
+    message_items = MagicMock()
+    message_items.count = AsyncMock(return_value=0)
+    file_input = MagicMock()
+    file_input.count = AsyncMock(return_value=1)
+    file_input.set_input_files = AsyncMock()
+    input_group = MagicMock()
+    input_group.first = file_input
+
+    send_button = MagicMock()
+    send_button.count = AsyncMock(return_value=1)
+    send_button.is_visible = AsyncMock(return_value=True)
+    send_button.click = AsyncMock()
+    send_buttons = MagicMock()
+    send_buttons.last = send_button
+    dialog = MagicMock()
+    dialog.is_visible = AsyncMock(return_value=True)
+    dialog.inner_text = AsyncMock(return_value="发送给 shuoer")
+    dialog.get_by_role.return_value = send_buttons
+    dialogs = MagicMock()
+    dialogs.count = AsyncMock(return_value=1)
+    dialogs.nth.return_value = dialog
+
+    def locator_for(selector):
+        if selector == '[data-e2e="msg-item-content"]':
+            return message_items
+        if selector == ".semi-modal-wrap":
+            return dialogs
+        return input_group
+
+    page.locator.side_effect = locator_for
+    page.wait_for_timeout = AsyncMock()
+    page.wait_for_function = AsyncMock()
+    trigger_send = AsyncMock()
+    monkeypatch.setattr("app.sender._trigger_send", trigger_send)
+
+    await send_image(page, source_image.as_posix())
+
+    send_button.click.assert_awaited_once_with()
+    trigger_send.assert_not_awaited()
 
 
 @pytest.mark.asyncio

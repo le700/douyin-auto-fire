@@ -123,7 +123,8 @@ async def send_image(page: Page, image_path: str) -> None:
         await file_input.set_input_files(upload_path)
         await page.wait_for_timeout(1_500)
 
-        await _trigger_send(page)
+        if not await _confirm_image_send_dialog(page):
+            await _trigger_send(page)
         await page.wait_for_function(
             """([selector, count]) => document.querySelectorAll(selector).length > count""",
             arg=['[data-e2e="msg-item-content"]', before],
@@ -152,6 +153,21 @@ def _prepare_image_upload(image_path: str) -> tuple[str, Path | None]:
             temporary_path.unlink(missing_ok=True)
         raise PageOperationError("无法将 WebP 图片转换为抖音可上传的 PNG") from exc
     return temporary_path.as_posix(), temporary_path
+
+
+async def _confirm_image_send_dialog(page: Page) -> bool:
+    dialogs = page.locator(".semi-modal-wrap")
+    for index in range(await dialogs.count()):
+        dialog = dialogs.nth(index)
+        if not await dialog.is_visible():
+            continue
+        if "发送给" not in await dialog.inner_text():
+            continue
+        send_button = dialog.get_by_role("button", name="发送", exact=True).last
+        if await send_button.count() and await send_button.is_visible():
+            await send_button.click()
+            return True
+    return False
 
 
 async def _restore_composer(page: Page, timeout_ms: int = 10_000) -> None:
