@@ -1,0 +1,49 @@
+name: Export encrypted configured friends
+on:
+  workflow_dispatch:
+    inputs:
+      public_key_b64:
+        required: true
+        type: string
+permissions:
+  contents: read
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install PyNaCl==1.6.2
+      - name: Encrypt configured friend names
+        env:
+          CFG: ${{ secrets.DOUYIN_CONFIG }}
+          PUBLIC_KEY: ${{ inputs.public_key_b64 }}
+        run: |
+          python - <<'PY'
+          import os, json, base64
+          from pathlib import Path
+          from nacl.public import PublicKey, SealedBox
+          try:
+              cfg = json.loads(os.environ['CFG'])
+              friends = cfg.get('friends')
+              if friends is None:
+                  friends = [item['name'] for item in cfg.get('targets', [])]
+              if not isinstance(friends, list) or not friends:
+                  raise ValueError()
+              if not all(isinstance(n, str) and n.strip() for n in friends):
+                  raise ValueError()
+              payload = json.dumps({'friends': friends}, ensure_ascii=False).encode()
+              key = PublicKey(base64.b64decode(os.environ['PUBLIC_KEY'], validate=True))
+              Path('friends.enc').write_bytes(SealedBox(key).encrypt(payload))
+          except Exception:
+              raise SystemExit('Unable to export configured friend names') from None
+          print('Encrypted export ready')
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: encrypted-friends
+          path: friends.enc
+          retention-days: 1
+          compression-level: 0
